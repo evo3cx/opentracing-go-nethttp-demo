@@ -19,11 +19,9 @@ import (
 )
 
 var (
-	zipkinURL = flag.String("url",
-		"http://localhost:9411/api/v1/spans", "Zipkin server URL")
+	zipkinURL  = flag.String("url", "http://localhost:9411/api/v1/spans", "Zipkin server URL")
 	serverPort = flag.String("port", "8000", "server port")
 	actorKind  = flag.String("actor", "server", "server or client")
-	abc        = "aa"
 	brokers    = []string{"localhost:9092"}
 )
 
