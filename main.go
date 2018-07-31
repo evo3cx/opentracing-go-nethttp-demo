@@ -1,21 +1,21 @@
 package main
 
 import (
+	"context"
 	"flag"
-	"fmt"
-	"io"
-	"io/ioutil"
-	"log"
 	"net/http"
 	"time"
 
-	"github.com/opentracing-contrib/go-stdlib/nethttp"
+	"github.com/Shopify/sarama"
 	opentracing "github.com/opentracing/opentracing-go"
-	"github.com/opentracing/opentracing-go/ext"
-	otlog "github.com/opentracing/opentracing-go/log"
-	"github.com/uber/jaeger-client-go"
-	"github.com/uber/jaeger-client-go/transport/zipkin"
-	"golang.org/x/net/context"
+	// opentracing "github.com/opentracing/opentracing-go"
+	// opentracing "github.com/opentracing/opentracing-go"
+	// // "github.com/opentracing-contrib/go-stdlib/nethttp"
+	// // opentracing "github.com/opentracing/opentracing-go"
+	// // "github.com/opentracing/opentracing-go/ext"
+	// otlog "github.com/opentracing/opentracing-go/log"
+	zipkingo "github.com/evo3cx/zipkin-go-opentracing"
+	// // "github.com/uber/jaeger-client-go"
 )
 
 var (
@@ -23,6 +23,8 @@ var (
 		"http://localhost:9411/api/v1/spans", "Zipkin server URL")
 	serverPort = flag.String("port", "8000", "server port")
 	actorKind  = flag.String("actor", "server", "server or client")
+	abc        = "aa"
+	brokers    = []string{"localhost:9092"}
 )
 
 const (
@@ -33,107 +35,153 @@ const (
 func main() {
 
 	flag.Parse()
-
-	if *actorKind != server && *actorKind != client {
-		log.Fatal("Please specify '-actor server' or '-actor client'")
-	}
-
-	// Jaeger tracer can be initialized with a transport that will
-	// report tracing Spans to a Zipkin backend
-	transport, err := zipkin.NewHTTPTransport(
-		*zipkinURL,
-		zipkin.HTTPBatchSize(1),
-		zipkin.HTTPLogger(jaeger.StdLogger),
-	)
-	if err != nil {
-		log.Fatalf("Cannot initialize HTTP transport: %v", err)
-	}
-	// create Jaeger tracer
-	tracer, closer := jaeger.NewTracer(
-		*actorKind,
-		jaeger.NewConstSampler(true), // sample all traces
-		jaeger.NewRemoteReporter(transport, nil),
-	)
-
-	if *actorKind == server {
-		runServer(tracer)
-		return
-	}
-
-	runClient(tracer)
-
-	// Close the tracer to guarantee that all spans that could
-	// be still buffered in memory are sent to the tracing backend
-	closer.Close()
+	producer := kafkaClient()
+	createCollector(producer)
 }
 
-func runClient(tracer opentracing.Tracer) {
-	// nethttp.Transport from go-stdlib will do the tracing
-	c := &http.Client{Transport: &nethttp.Transport{}}
+func kafkaClient() sarama.AsyncProducer {
+	config := sarama.NewConfig()
+	config.Producer.Retry.Max = 5
+	config.Producer.RequiredAcks = sarama.WaitForAll
+	brokers := []string{"localhost:9092"}
+	producer, err := sarama.NewAsyncProducer(brokers, config)
+	if err != nil {
+		panic(err)
+	}
 
-	// create a top-level span to represent full work of the client
-	span := tracer.StartSpan(client)
-	span.SetTag(string(ext.Component), client)
-	defer span.Finish()
-	ctx := opentracing.ContextWithSpan(context.Background(), span)
+	return producer
+}
 
-	req, err := http.NewRequest(
-		"GET",
-		fmt.Sprintf("http://localhost:%s/", *serverPort),
-		nil,
+func createCollector(prod sarama.AsyncProducer) {
+	collector, err := zipkingo.NewKafkaCollector(brokers, zipkingo.KafkaProducer(prod))
+	if err != nil {
+		panic(err)
+	}
+
+	recorder := zipkingo.NewRecorder(collector, true, "hostPort", "fresh-ask-service")
+	tracer, err := zipkingo.NewTracer(
+		recorder,
+		zipkingo.ClientServerSameSpan(false),
+		zipkingo.TraceID128Bit(true),
 	)
 	if err != nil {
-		onError(span, err)
-		return
+		panic(err)
+	}
+
+	// Explicitly set our tracer to be the default tracer.
+	opentracing.InitGlobalTracer(tracer)
+
+	// Create Root Span for duration of the interaction with svc1
+	span := opentracing.StartSpan("Run")
+	// Put root span in context so it will be used in our calls to the client.
+	ctx := opentracing.ContextWithSpan(context.Background(), span)
+
+	// Call the Ask Google
+	span.LogEvent("Ask Google")
+	if err = AskGoogle(ctx); err != nil {
+		panic("ARRR google" + err.Error())
+	}
+
+	// Call the Ask Quora
+	span.LogEvent("Ask Quora")
+	if err = AskQuora(ctx); err != nil {
+		panic("ARRR google" + err.Error())
+	}
+
+	span.SetOperationName("ask_service")
+
+	// Finish our CLI span
+	span.Finish()
+
+	// Close collector to ensure spans are sent before exiting.
+	collector.Close()
+}
+
+func AskGoogle(ctx context.Context) error {
+
+	// retrieve current Span from Context
+	var parentCtx opentracing.SpanContext
+	parentSpan := opentracing.SpanFromContext(ctx)
+	if parentSpan != nil {
+		parentCtx = parentSpan.Context()
+	}
+
+	// start a new Span to wrap HTTP request
+	span := opentracing.StartSpan(
+		"ask google",
+		opentracing.ChildOf(parentCtx),
+	)
+	time.Sleep(time.Second * 2)
+	// make sure the Span is finished once we're done
+	defer span.Finish()
+
+	// make the Span current in the context
+	ctx = opentracing.ContextWithSpan(ctx, span)
+
+	// now prepare the request
+	req, err := http.NewRequest("GET", "http://google.com", nil)
+	if err != nil {
+		return err
 	}
 
 	req = req.WithContext(ctx)
-	// wrap the request in nethttp.TraceRequest
-	req, ht := nethttp.TraceRequest(tracer, req)
-	defer ht.Finish()
-
-	res, err := c.Do(req)
+	// execute the request
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		onError(span, err)
-		return
+		return err
 	}
-	defer res.Body.Close()
-	body, err := ioutil.ReadAll(res.Body)
+
+	span = span.SetTag("db.type", "redis")
+	span = span.SetTag("db.statement", "test")
+	span = span.SetTag("span.kind", "client")
+
+	// Google home page is not too exciting, so ignore the result
+	res.Body.Close()
+	return nil
+}
+
+func AskQuora(ctx context.Context) error {
+
+	// retrieve current Span from Context
+	var parentCtx opentracing.SpanContext
+	parentSpan := opentracing.SpanFromContext(ctx)
+	if parentSpan != nil {
+		parentCtx = parentSpan.Context()
+	}
+
+	// start a new Span to wrap HTTP request
+	span := opentracing.StartSpan(
+		"ask quora",
+		opentracing.ChildOf(parentCtx),
+	)
+	time.Sleep(time.Second * 2)
+	// make sure the Span is finished once we're done
+	defer span.Finish()
+
+	// make the Span current in the context
+	ctx = opentracing.ContextWithSpan(ctx, span)
+
+	// now prepare the request
+	req, err := http.NewRequest("GET", "http://quora.com", nil)
 	if err != nil {
-		onError(span, err)
-		return
+		return err
 	}
-	fmt.Printf("Received result: %s\n", string(body))
-}
 
-func onError(span opentracing.Span, err error) {
-	// handle errors by recording them in the span
-	span.SetTag(string(ext.Error), true)
-	span.LogKV(otlog.Error(err))
-	log.Print(err)
-}
-
-func getTime(w http.ResponseWriter, r *http.Request) {
-	log.Print("Received getTime request")
-	t := time.Now()
-	ts := t.Format("Mon Jan _2 15:04:05 2006")
-	io.WriteString(w, fmt.Sprintf("The time is %s", ts))
-}
-
-func redirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r,
-		fmt.Sprintf("http://localhost:%s/gettime", *serverPort), 301)
-}
-
-func runServer(tracer opentracing.Tracer) {
-	http.HandleFunc("/gettime", getTime)
-	http.HandleFunc("/", redirect)
-	log.Printf("Starting server on port %s", *serverPort)
-	err := http.ListenAndServe(
-		fmt.Sprintf(":%s", *serverPort),
-		// use nethttp.Middleware to enable OpenTracing for server
-		nethttp.Middleware(tracer, http.DefaultServeMux))
+	// execute the request
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Fatalf("Cannot start server: %s", err)
+		return err
 	}
+	span = span.SetTag("db.type", "redis")
+	span = span.SetTag("db.statement", "test")
+	span = span.SetTag("span.kind", "client")
+
+	span.LogKV(
+		"event", "error",
+		"message", "vc",
+		"latency", "20s",
+	)
+	// Quora home page is not too exciting, so ignore the result
+	res.Body.Close()
+	return nil
 }

@@ -1,0 +1,22 @@
+version: "3"
+services:
+
+  kafka-zookeeper: 
+    image: openzipkin/zipkin-kafka:2
+    container_name: kafka-zookeeper
+    # environment:
+      # corresponds to your docker machine and your producer's broker list
+      # - KAFKA_ADVERTISED_HOST_NAME=192.168.99.100
+    ports:
+      - 2181:2181
+      - 9092:9092
+      
+  zipkin:
+    image: openzipkin/zipkin:2
+    ports:
+      # Port used for the Zipkin UI and HTTP Api
+      - 9411:9411
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-zookeeper:9092
+    depends_on:
+      - kafka-zookeeper

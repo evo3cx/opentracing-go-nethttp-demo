@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptrace"
 	"testing"
@@ -13,7 +12,6 @@ import (
 
 func Test(t *testing.T) {
 	AskGoogle(context.Background())
-	fmt.Println("weird")
 }
 
 func ExampleAskGoogle() {
