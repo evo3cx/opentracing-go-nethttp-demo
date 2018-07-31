@@ -1,16 +1,24 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptrace"
+	"testing"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/log"
 	"golang.org/x/net/context"
 )
 
+func Test(t *testing.T) {
+	AskGoogle(context.Background())
+	fmt.Println("weird")
+}
+
 func ExampleAskGoogle() {
 	AskGoogle(context.Background())
+
 }
 
 // We will talk about this later
@@ -25,7 +33,7 @@ func AskGoogle(ctx context.Context) error {
 	}
 
 	// start a new Span to wrap HTTP request
-	span := tracer.StartSpan(
+	span := opentracing.StartSpan(
 		"ask google",
 		opentracing.ChildOf(parentCtx),
 	)
