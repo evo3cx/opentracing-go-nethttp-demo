@@ -19,15 +19,7 @@ import (
 )
 
 var (
-	zipkinURL  = flag.String("url", "http://localhost:9411/api/v1/spans", "Zipkin server URL")
-	serverPort = flag.String("port", "8000", "server port")
-	actorKind  = flag.String("actor", "server", "server or client")
-	brokers    = []string{"localhost:9092"}
-)
-
-const (
-	server = "server"
-	client = "client"
+	brokers = []string{"localhost:9092"}
 )
 
 func main() {
@@ -41,7 +33,7 @@ func kafkaClient() sarama.AsyncProducer {
 	config := sarama.NewConfig()
 	config.Producer.Retry.Max = 5
 	config.Producer.RequiredAcks = sarama.WaitForAll
-	brokers := []string{"localhost:9092"}
+
 	producer, err := sarama.NewAsyncProducer(brokers, config)
 	if err != nil {
 		panic(err)
