@@ -1,3 +1,18 @@
-# opentracing-go-nethttp-demo
+# Testing OpenTracing use a Kafka Tranport with Zipkin
 
-Demo code for blog post [Tracing HTTP request latency in Go with OpenTracing](https://medium.com/@YuriShkuro/tracing-http-request-latency-in-go-with-opentracing-7cc1282a100a#.r6h4w2n9o)
+## Prerequirements
+
+* Golang 1.8^
+* Docker-Compose
+
+## Geting Started
+
+Run Kafka and Zipkin service with docker compose
+`docker-compose up -d`
+
+Run http trace client
+`go run main.go`
+
+Open a browser and go to Zipkin UI at ` http:\\localhost:9411`
+ 
+
